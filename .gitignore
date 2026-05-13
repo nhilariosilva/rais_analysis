@@ -1,0 +1,22 @@
+# Pycache directory
+**/__pycache__/
+
+# Jupyter Notebook checkpoints
+**/.ipynb_checkpoints/
+
+**/build/
+**/dist/
+
+.Rhistory
+
+pyproject.toml
+LICENSE
+
+**/venv/
+**/env/
+**/GDCdata/
+*.rds
+*.csv
+*.pkl
+*.jpg
+*.txt
