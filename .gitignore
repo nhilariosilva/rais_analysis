@@ -20,3 +20,4 @@ LICENSE
 *.pkl
 *.jpg
 *.txt
+*.~lock.*
