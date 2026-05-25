@@ -20,4 +20,5 @@ LICENSE
 *.pkl
 *.jpg
 *.txt
+*.parquet
 *.~lock.*
