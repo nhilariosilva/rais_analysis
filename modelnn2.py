@@ -647,7 +647,6 @@ class ModelNN(keras.models.Model):
             Executes the entire optimization loop purely in C++.
             Bypasses all Keras callbacks, progress bars, and Python overhead.
         """
-        ell = 0
         # Training variables
         final_epoch = tf.constant(0, dtype = tf.int32)
         current_loss = tf.constant(0.0, dtype = tf.float32)
@@ -689,11 +688,7 @@ class ModelNN(keras.models.Model):
         for epoch in tf.range(epochs):
             # At the start of each epoch, assign the current epoch to a global variable
             self.current_epoch.assign( tf.cast(epoch, tf.int32) )
-            ell = 0
             for batch_full_data in train_dataset:
-                tf.print("epoch", epoch, "batch", ell)
-                ell += 1
-                
                 if(self.neural_network_use):
                     x_batch = batch_full_data[0]
                     batch_data_tuple = batch_full_data[1:]
