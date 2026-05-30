@@ -60,7 +60,9 @@ class ModelNN(keras.models.Model):
         self.device = dummy_tensor.device
         # Detects whether tf is running in a CPU or GPU device
         self.gpu_use = ( self.device.split(":")[-2].lower() == "gpu" )
-    
+
+        if(input_dim is None):
+            raise ValueError("Please, provide an input dimension for the data.")
         self.input_dim = input_dim
         self.seed = seed
         # If seed was specified, fix the seed structure before initializing the model weights to ensure reproducibility
@@ -733,9 +735,7 @@ class ModelNN(keras.models.Model):
                         loss_value = loss_value + regularization_penalty * batch_fraction
                         
                 gradients = tape.gradient(loss_value, self.trainable_variables)
-
-                tf.print("    Test 1 - Gradients done")
-                
+    
                 # Gradient trap: Check if any gradient in the entire network became NaN or Inf
                 has_nan_grad = tf.reduce_any([tf.reduce_any(tf.math.is_nan(g)) for g in gradients if g is not None])
                 has_inf_grad = tf.reduce_any([tf.reduce_any(tf.math.is_inf(g)) for g in gradients if g is not None])
@@ -744,8 +744,6 @@ class ModelNN(keras.models.Model):
                     convergence_reason = "nan_gradients"
                     stop_training = True
                     break
-
-                tf.print("    Test 2 - nan Gradients verification")
                 
                 # To avoid crash problems in that case, we simply replace None with a zero like gradient, so those weights do not get updated
                 # It is the user's responsibility to build a loss that depends on all the trainable parameters, but we allow that to happen in this case
@@ -757,8 +755,6 @@ class ModelNN(keras.models.Model):
                 independent_gradients = gradients[ :len(self.independent_pars) ]
                 nn_gradients = gradients[ len(self.independent_pars): ]
 
-                tf.print("    Test 3 - Gradients formatting")
-                
                 # ------------------------------------------------------------ Cumulate gradients ------------------------------------------------------------
                 self.n_acum_step.assign_add(1)
                 
@@ -786,10 +782,6 @@ class ModelNN(keras.models.Model):
                     # Resets the cumulation counter
                     self.n_acum_step.assign(0)
 
-                tf.print("    Test 3 - Gradients cummulating")
-
-
-            tf.print("    Test final - Batches finished")
             
             nn_learning_rate_history = nn_learning_rate_history.write(epoch, self.optimizer_nn.learning_rate)
             # --------------------------------------------------------------- Evaluate stop criteria ---------------------------------------------------------------
@@ -1871,8 +1863,23 @@ class ModelNN(keras.models.Model):
             x_spec = x.element_spec[0] if isinstance(x.element_spec, tuple) else x.element_spec
             
             # If the dataset rank is greater than the input_dim rank,
-            # the user has already created a batched dataset. No need to handle that here
-            is_batched = len(x_spec.shape) > len(self.input_dim)
+            # And if by taking the first dimension of x_spec out
+            # and that first dimension is in fact equal to None,
+            # then the user has previously created a batched dataset. No need to handle that here
+            # In fact, suppose the input data is given by a tensor with shape (200, 200, 3)
+            # Then a batched tf.data.Dataset will return a x_spec with shape (None, 200, 200, 3),
+            # while an unbatched Dataset returns a shape (200, 200, 3)
+            is_batched = False
+            if( (len(x_spec.shape) > len(self.input_dim)) and (x_spec.shape[0] is None) ):
+                # Specifically, if when unbatching the Dataset, its shape continues to be different from the input_dim
+                if x_spec.shape[1:] != self.input_dim:
+                    raise ValueError(
+                        f"The provided train dataset appears to be batched (shape: {x_spec.shape}), "
+                        f"but its underlying element shape {x_spec.shape[1:]} does not match "
+                        f"the expected `input_dim` of {self.input_dim}. "
+                        f"Please ensure your dataset has the correct dimensions or wasn't accidentally batched twice."
+                    )
+                is_batched = True
             
             # -----------------------------
             
@@ -1913,7 +1920,17 @@ class ModelNN(keras.models.Model):
                     # If user provided both x and x_val as Datasets ready to use. They only have to provide n_train and n_val as extra parameters
                     if(isinstance(x_val, tf.data.Dataset)):
                         x_val_spec = x_val.element_spec[0] if isinstance(x_val.element_spec, tuple) else x_val.element_spec
-                        is_batched_val = len(x_val_spec.shape) > len(self.input_dim)
+                        is_batched_val = False
+                        if( (len(x_val_spec.shape) > len(self.input_dim)) and (x_val_spec.shape[0] is None) ):
+                            # Specifically, if when unbatching the Dataset, its shape continues to be different from the input_dim
+                            if(x_val_spec.shape[1:] != self.input_dim):
+                                raise ValueError(
+                                    f"The provided validation dataset appears to be batched (shape: {x_val_spec.shape}), "
+                                    f"but its underlying element shape {x_val_spec.shape[1:]} does not match "
+                                    f"the expected `input_dim` of {self.input_dim}. "
+                                    f"Please ensure your dataset has the correct dimensions or wasn't accidentally batched twice."
+                                )
+                            is_batched_val = True
 
                         # If validation data is also batched, require mandatory n_val value
                         self.val_batch_size = None
@@ -2028,7 +2045,17 @@ class ModelNN(keras.models.Model):
                     # If user provided x_val as a tf.Dataset ready to use.
                     if(isinstance(x_val, tf.data.Dataset)):
                         x_val_spec = x_val.element_spec[0] if isinstance(x_val.element_spec, tuple) else x_val.element_spec
-                        is_batched_val = len(x_val_spec.shape) > len(self.input_dim)
+                        is_batched_val = False
+                        if( (len(x_val_spec.shape) > len(self.input_dim)) and (x_val_spec.shape[0] is None) ):
+                            # Specifically, if when unbatching the Dataset, its shape continues to be different from the input_dim
+                            if(x_val_spec.shape[1:] != self.input_dim):
+                                raise ValueError(
+                                    f"The provided validation dataset appears to be batched (shape: {x_val_spec.shape}), "
+                                    f"but its underlying element shape {x_val_spec.shape[1:]} does not match "
+                                    f"the expected `input_dim` of {self.input_dim}. "
+                                    f"Please ensure your dataset has the correct dimensions or wasn't accidentally batched twice."
+                                )
+                            is_batched_val = True
 
                         # If x_val is batched. We cannot get exact n_val without iteration.
                         if(is_batched_val):
