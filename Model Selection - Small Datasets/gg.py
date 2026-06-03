@@ -166,7 +166,80 @@ def S(y, alpha, c, beta):
     # Native survival function is highly stable for the extreme right tail
     return dist.survival_function(tf.math.pow(y_safe, c))
 
-@tf.function(reduce_retracing=True)
+# Helper function to perform pure forward passes in high-precision float64
+def calc_log_S_raw_64(y_64, a_64, c_64, b_64):
+    eps = tf.constant(1e-7, dtype=tf.float64)
+    # Ensure numerical stability if h pushes variables near zero
+    safe_a = tf.math.maximum(a_64, eps)
+    safe_c = tf.math.maximum(c_64, eps)
+    safe_b = tf.math.maximum(b_64, eps)
+    
+    dist = tfp.distributions.Gamma(concentration=safe_a, rate=safe_b)
+    return dist.log_survival_function(tf.math.pow(y_64, safe_c))
+
+@tf.custom_gradient
+def log_S_dalpha(y, alpha, c, beta):
+    y_64 = tf.cast(y, tf.float64)
+    alpha_64 = tf.cast(alpha, tf.float64)
+    c_64 = tf.cast(c, tf.float64)
+    beta_64 = tf.cast(beta, tf.float64)
+    h = tf.constant(1e-5, dtype=tf.float64)
+    
+    # 1st derivative (Finite Difference)
+    grad_alpha_64 = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64) - calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64)) / (2.0 * h)
+    grad_alpha = tf.cast(grad_alpha_64, tf.float32)
+
+    def custom_second_derivative(upstream_grad):
+        # 2nd derivatives (Finite Differences shield the graph from IgammaGradA)
+        d2_a2 = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64) - 2.0*calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64) + calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64)) / (h*h)
+        cross_ac = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64 + h, beta_64) - calc_log_S_raw_64(y_64, alpha_64 + h, c_64 - h, beta_64) - calc_log_S_raw_64(y_64, alpha_64 - h, c_64 + h, beta_64) + calc_log_S_raw_64(y_64, alpha_64 - h, c_64 - h, beta_64)) / (4.0 * h * h)
+        cross_ab = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64 + h) - calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64 - h) - calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64 + h) + calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64 - h)) / (4.0 * h * h)
+        
+        return None, upstream_grad * tf.cast(d2_a2, tf.float32), upstream_grad * tf.cast(cross_ac, tf.float32), upstream_grad * tf.cast(cross_ab, tf.float32)
+    
+    return grad_alpha, custom_second_derivative
+
+@tf.custom_gradient
+def log_S_dc(y, alpha, c, beta):
+    y_64 = tf.cast(y, tf.float64)
+    alpha_64 = tf.cast(alpha, tf.float64)
+    c_64 = tf.cast(c, tf.float64)
+    beta_64 = tf.cast(beta, tf.float64)
+    h = tf.constant(1e-5, dtype=tf.float64)
+    
+    grad_c_64 = (calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64) - calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64)) / (2.0 * h)
+    grad_c = tf.cast(grad_c_64, tf.float32)
+
+    def custom_second_derivative(upstream_grad):
+        cross_ac = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64 + h, beta_64) - calc_log_S_raw_64(y_64, alpha_64 + h, c_64 - h, beta_64) - calc_log_S_raw_64(y_64, alpha_64 - h, c_64 + h, beta_64) + calc_log_S_raw_64(y_64, alpha_64 - h, c_64 - h, beta_64)) / (4.0 * h * h)
+        d2_c2 = (calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64) - 2.0*calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64) + calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64)) / (h*h)
+        cross_cb = (calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64 + h) - calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64 - h) - calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64 + h) + calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64 - h)) / (4.0 * h * h)
+        
+        return None, upstream_grad * tf.cast(cross_ac, tf.float32), upstream_grad * tf.cast(d2_c2, tf.float32), upstream_grad * tf.cast(cross_cb, tf.float32)
+    
+    return grad_c, custom_second_derivative
+
+@tf.custom_gradient
+def log_S_dbeta(y, alpha, c, beta):
+    y_64 = tf.cast(y, tf.float64)
+    alpha_64 = tf.cast(alpha, tf.float64)
+    c_64 = tf.cast(c, tf.float64)
+    beta_64 = tf.cast(beta, tf.float64)
+    h = tf.constant(1e-5, dtype=tf.float64)
+    
+    grad_beta_64 = (calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64 + h) - calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64 - h)) / (2.0 * h)
+    grad_beta = tf.cast(grad_beta_64, tf.float32)
+
+    def custom_second_derivative(upstream_grad):
+        cross_ab = (calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64 + h) - calc_log_S_raw_64(y_64, alpha_64 + h, c_64, beta_64 - h) - calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64 + h) + calc_log_S_raw_64(y_64, alpha_64 - h, c_64, beta_64 - h)) / (4.0 * h * h)
+        cross_cb = (calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64 + h) - calc_log_S_raw_64(y_64, alpha_64, c_64 + h, beta_64 - h) - calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64 + h) + calc_log_S_raw_64(y_64, alpha_64, c_64 - h, beta_64 - h)) / (4.0 * h * h)
+        d2_b2 = (calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64 + h) - 2.0*calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64) + calc_log_S_raw_64(y_64, alpha_64, c_64, beta_64 - h)) / (h*h)
+        
+        return None, upstream_grad * tf.cast(cross_ab, tf.float32), upstream_grad * tf.cast(cross_cb, tf.float32), upstream_grad * tf.cast(d2_b2, tf.float32)
+    
+    return grad_beta, custom_second_derivative
+
+@tf.custom_gradient
 def log_S(y, alpha, c, beta):
     y = tf.cast(y, tf.float32)
     alpha = tf.cast(alpha, tf.float32)
@@ -176,7 +249,17 @@ def log_S(y, alpha, c, beta):
     eps = 1.0e-7
     y_safe = y + eps
     
-    dist = tfp.distributions.Gamma(concentration = alpha, rate = beta)
-    
-    # Safely computes the log of the survival probability without underflowing to -inf
-    return dist.log_survival_function(tf.math.pow(y_safe, c))
+    # Forward pass calculates normally
+    dist = tfp.distributions.Gamma(concentration=alpha, rate=beta)
+    t = tf.math.pow(y_safe, c)
+    log_S_val = dist.log_survival_function(t)
+
+    def custom_derivative(upstream_grad):
+        # We explicitly route the 1st derivatives to our shielded custom gradient blocks
+        dlog_S_y_alpha = log_S_dalpha(y_safe, alpha, c, beta)
+        dlog_S_y_c = log_S_dc(y_safe, alpha, c, beta)
+        dlog_S_y_beta = log_S_dbeta(y_safe, alpha, c, beta)
+        
+        return None, upstream_grad * dlog_S_y_alpha, upstream_grad * dlog_S_y_c, upstream_grad * dlog_S_y_beta
+        
+    return log_S_val, custom_derivative
