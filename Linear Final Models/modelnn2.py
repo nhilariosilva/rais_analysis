@@ -2291,7 +2291,7 @@ class ModelNN(keras.models.Model):
         if(shuffle):
             train_dataset = train_dataset.cache().shuffle(buffer_size = self.buffer_size, reshuffle_each_iteration = True, seed = self.seed)
         self.train_dataset = train_dataset.batch(self.train_batch_size).prefetch(tf.data.AUTOTUNE)
-        self.train_dataset = [ tf.data.Dataset.get_single_element(self.train_dataset) ]
+        # self.train_dataset = [ tf.data.Dataset.get_single_element(self.train_dataset) ]
 
         val_dataset = None
         if(validation):
@@ -2303,9 +2303,6 @@ class ModelNN(keras.models.Model):
         
         self.configured = True
 
-    # --- NEW OPTIMIZED GRAPH COMPILATION ---
-    
-    # ---------------------------------------
     
     def get_covariances(self, jitter = 1.0e-6):
         """
