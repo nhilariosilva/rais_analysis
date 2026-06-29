@@ -24,3 +24,5 @@ LICENSE
 *.~lock.*
 *.crdownload
 *.tfrecord
+!train_data_small.parquet
+!test_data_small.parquet
